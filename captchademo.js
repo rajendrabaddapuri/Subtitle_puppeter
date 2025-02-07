@@ -1,6 +1,9 @@
 import puppeteer from "puppeteer";
 import { createWorker } from "tesseract.js";
 
+process.env.TESSDATA_PREFIX =
+  "./node_modules/tesseract.js-core/tesseract-core/";
+
 (async () => {
   try {
     const browser = await puppeteer.launch({
@@ -26,27 +29,52 @@ import { createWorker } from "tesseract.js";
     });
     await screenshotPage.close();
 
+    // Initialize with just the essential parameters
     const worker = await createWorker();
-    // FOR BETTER RECOGNITION
-    await worker.load("eng");
     await worker.reinitialize("eng");
+
     await worker.setParameters({
       tessedit_char_whitelist:
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
       preserve_interword_spaces: "1",
-      tessjs_create_pdf: "0",
-      tessjs_create_hocr: "0",
-      tessjs_create_tsv: "0",
     });
 
-    const { data } = await worker.recognize("captcha.png");
-    console.log("Result:", data.text);
+    const extractedTexts = new Set();
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    while (extractedTexts.size < 10 && attempts < maxAttempts) {
+      const { data } = await worker.recognize("captcha.png");
+      const recognizedText = data.text.trim();
+      console.log(` results ${recognizedText}`);
+      if (recognizedText && !extractedTexts.has(recognizedText)) {
+        extractedTexts.add(recognizedText);
+        console.log(`Unique result ${extractedTexts.size}:`, recognizedText);
+      }
+      attempts++;
+    }
+
+    const uniqueResults = Array.from(extractedTexts);
+    console.log(
+      `Found ${uniqueResults.length} unique results in ${attempts} attempts`
+    );
+
+    // Add error handling for empty results
+    const bestResult = uniqueResults[0] || "";
+    console.log("Selected result:", bestResult);
+
     await worker.terminate();
 
-    await page.waitForSelector('input[type="text"]');
+    // Add check for empty result
+    if (!bestResult) {
+      console.log("Failed to recognize CAPTCHA");
+      await browser.close();
+      return;
+    }
 
+    await page.waitForSelector('input[type="text"]');
     await page.focus('input[type="text"]');
-    await page.keyboard.type(data.text);
+    await page.keyboard.type(bestResult);
     await page.click('button[type="submit"]');
     await new Promise((resolve) => setTimeout(resolve, 1000));
     await browser.close();
